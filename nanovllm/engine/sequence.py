@@ -9,23 +9,38 @@ class SequenceStatus(Enum):
     WAITING = auto()
     RUNNING = auto()
     FINISHED = auto()
+    # print(SequenceStatus.WAITING.value) 
+    # 1
+    # print(SequenceStatus.RUNNING.value) 
+    # 2
+    # print(SequenceStatus.RUNNING)
+    # SequenceStatus.RUNNING
 
 
 class Sequence:
     block_size = 256
     counter = count()
+    # class var
+    # a block's size if 256
+    # a counter for generating sequence id
 
     def __init__(self, token_ids: list[int], sampling_params = SamplingParams()):
         self.seq_id = next(Sequence.counter)
         self.status = SequenceStatus.WAITING
         self.token_ids = copy(token_ids)
+        # what is this token_ids?
+        # Question: where is the definition of token_ids?
         self.last_token = token_ids[-1]
         self.num_tokens = len(self.token_ids)
+        # Question: what is the difference between token_ids and self.token_ids?
         self.num_prompt_tokens = len(token_ids)
         self.num_cached_tokens = 0
+        # the num of valid kv cache
         self.num_scheduled_tokens = 0
+        # the num of tokens which will be sent to ModelRunner by Scheduler
         self.is_prefill = True
         self.block_table = []
+        # logical KV block -> physical KV block
         self.temperature = sampling_params.temperature
         self.max_tokens = sampling_params.max_tokens
         self.ignore_eos = sampling_params.ignore_eos
