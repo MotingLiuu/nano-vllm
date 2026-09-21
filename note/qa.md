@@ -36,7 +36,9 @@
   │ 为什么释放块的时候要倒序（reversed）释放？如果改成正序释放，会对前缀缓存的命中率
   │ （LRU 淘汰策略）产生什么微妙的影响？
 
-  Answer: I don't know, need to check scheduler.py
+  Answer: 
+  This is because `allocate` would alway return the leftmost free block.
+  we should reverse the order of the block_table to make sure the most important block is in the last of free list.
 
   #### 思考题 3：尾块隔离与写时并发安全
 
@@ -60,7 +62,10 @@
   │ 请求中，这三个数值在一次调度迭代（Schedule → Run →
   │ Postprocess）前后分别是如何变化的？
 
-  Answer: I don't know, need to check scheduler.py
+  Answer: 
+  1. num_tokens: it is the total number of tokens in the prompt. no change.
+  2. num_cached_tokens: it is the number of tokens that have been cached, it would be seq.num_scheduled_token(max_num_batched_tokens) + num_cached_tokens
+  3. num_scheduled_tokens: it is the number of tokens that have been scheduled(max_num_batched_tokens) 
 
   #### 思考题 5：为什么架构上不能用 batch 下标直接存状态？（连接 Day 3 的核心思考）
 
@@ -69,8 +74,14 @@
   │ 为什么在 nano-vLLM 这种支持 Continuous
   │ Batching（连续批处理）的真实引擎中，绝对不能用当前 Batch
   │ 中的位置索引（batch_index）来绑定请求的状态？
+
+
+Answer: I have not looked into engine. But I think this is because length of prompt is not fixed.
   ──────
   你可以尝试挑 1~2 个你最感兴趣的问题聊聊你的直觉或答案，我们可以顺着这些问题把整个
   engine 的运行链条彻底打通！
 
-  Answer: what is continuous batching?
+
+
+
+
