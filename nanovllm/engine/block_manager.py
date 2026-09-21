@@ -35,10 +35,22 @@ class BlockManager:
     @classmethod
     def compute_hash(cls, token_ids: list[int], prefix: int = -1):
         h = xxhash.xxh64()
+        # Question: what is xxh64?
         if prefix != -1:
             h.update(prefix.to_bytes(8, "little"))
+            # Question: explain the h.update and prefix.to_bytes
         h.update(np.array(token_ids).tobytes())
+        # So h represents the hash value prefix and token_ids?
         return h.intdigest()
+    # I have no idea with xxhash, expalin in detail.
+    # explain hash in detail
+    # can this ensure the uniqueness of the hash value?
+
+    # Question: I know there is 2 check
+    # 1. hash
+    # 2. current token ids
+    # But I don't think this can ensure the uniqueness of the block with context.
+    # Is there a situation that context is diff, current token ids is same, but hash is same?
 
     def _allocate_block(self) -> int:
         block_id = self.free_block_ids.popleft()
@@ -56,15 +68,23 @@ class BlockManager:
         self.free_block_ids.append(block_id)
 
     def can_allocate(self, seq: Sequence) -> int:
+        # Question: is can_allocated used for prefill?
+        # I do not see any decoding symbol in the code. like +1 ...
+        # This code just use the current seq.num_blocks
         h = -1
         num_cached_blocks = 0
         num_new_blocks = seq.num_blocks
+        # current blocks
         for i in range(seq.num_blocks - 1):
             token_ids = seq.block(i)
             h = self.compute_hash(token_ids, h)
+            # Question: what is h here? why h is sent to compute_hash through prefix?
+            # is h a hash value chain?
+            # Answer: Yes, h is computed through chain.
             block_id = self.hash_to_block_id.get(h, -1)
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
                 break
+            # if the token_ids with context 's kv is not stored, break.
             num_cached_blocks += 1
             if block_id in self.used_block_ids:
                 num_new_blocks -= 1
@@ -85,6 +105,8 @@ class BlockManager:
             else:
                 block.ref_count = 1
                 self.free_block_ids.remove(block_id)
+                # so free block ids represents that the block has kv cache, but not in used, it can be freed by manager if necessary?
+                # Question: when will the block move from used to free?
                 self.used_block_ids.add(block_id)
             seq.block_table.append(block_id)
         for i in range(num_cached_blocks, seq.num_blocks):
@@ -92,6 +114,7 @@ class BlockManager:
         seq.num_cached_tokens = num_cached_blocks * self.block_size
 
     def deallocate(self, seq: Sequence):
+        # deallocate would put the block back to free block ids
         for block_id in reversed(seq.block_table):
             block = self.blocks[block_id]
             block.ref_count -= 1
@@ -101,9 +124,11 @@ class BlockManager:
         seq.block_table.clear()
 
     def can_append(self, seq: Sequence) -> bool:
+        # check if there is enough free blocks
         return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
 
     def may_append(self, seq: Sequence):
+        # if the last block is full, allocate a new block
         if len(seq) % self.block_size == 1:
             seq.block_table.append(self._allocate_block())
 
