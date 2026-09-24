@@ -184,6 +184,14 @@ class Qwen3Model(nn.Module):
 
 
 class Qwen3ForCausalLM(nn.Module):
+    # huggingfce's weights are independent: q_proj.weight, k_proj.weight, v_proj.weight
+    # gate_proj.weight, up_proj.weight
+
+    # to reduce Kernel Launch Overhead and use bigger GEMM improving usage of GPU
+    # nanovllm fuse then into qkv_proj: linear.py and gate_up_proj: linear.py
+
+    # Question: these can be fused into bigger GEMM kernel during inference. How about training?
+    # Answer: yes, they can be fused into bigger GEMM kernel during inference. But for downstream use huggingface just store them seperately.
     packed_modules_mapping = {
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
@@ -199,9 +207,15 @@ class Qwen3ForCausalLM(nn.Module):
         super().__init__()
         self.model = Qwen3Model(config)
         self.lm_head = ParallelLMHead(config.vocab_size, config.hidden_size)
+        # Question: what is ParallelLMHead? what does Parallel mean?
+        # Answer: Parallem means Tensor Parallelism, TP. This mean it computes in 2 or more GPUs in parallel.
+        # It would compute vocab score seperately in different GPUs. 1st part in GPU0, 2nd part in GPU1, 3rd part in GPU2, etc.
         if config.tie_word_embeddings:
+            # Question: what is this? does this mean that lm_head.weight using embedding.weight?
+            # Answer: yes, this means that lm_head.weight using embedding.weight.
             self.lm_head.weight.data = self.model.embed_tokens.weight.data
 
+    # forward() only computes hidden_states [batch_size, hidden_size]
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -209,6 +223,7 @@ class Qwen3ForCausalLM(nn.Module):
     ) -> torch.Tensor:
         return self.model(input_ids, positions)
 
+    # compute_logits() computes word grades [batch_size, vocab_size]
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
