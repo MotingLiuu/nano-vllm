@@ -24,6 +24,7 @@ class ModelRunner:
         self.event = event
 
         dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
+        # Question: what is init_process_group?
         torch.cuda.set_device(rank)
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.dtype)
@@ -31,6 +32,7 @@ class ModelRunner:
         self.model = Qwen3ForCausalLM(hf_config)
         load_model(self.model, config.model)
         self.sampler = Sampler()
+        # Sampler transform logits to next token id
         self.warmup_model()
         self.allocate_kv_cache()
         if not self.enforce_eager:
@@ -89,8 +91,13 @@ class ModelRunner:
         return method(*args)
 
     def warmup_model(self):
+        # Question: what is warmup_model?
         torch.cuda.empty_cache()
+        # Question: what is empty_cache?
+        # Answer: free freememo in Pytorch Caching Allocator
         torch.cuda.reset_peak_memory_stats()
+        # Question: what is reset_peak_memory_stats?
+        # Answer: reset Pytorch allocated_bytes.all.peak
         max_num_batched_tokens, max_model_len = self.config.max_num_batched_tokens, self.config.max_model_len
         seq_len = min(max_num_batched_tokens, max_model_len)
         num_seqs = min(max_num_batched_tokens // seq_len, self.config.max_num_seqs)

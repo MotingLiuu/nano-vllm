@@ -22,17 +22,29 @@ class LLMEngine:
         self.ps = []
         self.events = []
         ctx = mp.get_context("spawn")
+        # ctx is a multiprocessing context, it rules the way to spawn child process
         for i in range(1, config.tensor_parallel_size):
+            # what is tensor parallel size?
             event = ctx.Event()
+            # what is event?
+            # a processes synchronize flag
+            # rank 0 use num config.tensor_parallel_size to sync different child process
             process = ctx.Process(target=ModelRunner, args=(config, i, event))
+            # set the entry point of child process
             process.start()
+            # what is start?
+            # start the child process
             self.ps.append(process)
+            # ps is process list, storing [Process_1, Process_2, ...]
             self.events.append(event)
         self.model_runner = ModelRunner(config, 0, self.events)
+        # whey here is self.events? child process use event.
         self.tokenizer = AutoTokenizer.from_pretrained(config.model, use_fast=True)
         config.eos = self.tokenizer.eos_token_id
         self.scheduler = Scheduler(config)
         atexit.register(self.exit)
+        # what is atexit? and register?
+        # when the program exit, call this function
 
     def exit(self):
         self.model_runner.call("exit")
@@ -50,6 +62,7 @@ class LLMEngine:
         seqs, is_prefill = self.scheduler.schedule()
         num_tokens = sum(seq.num_scheduled_tokens for seq in seqs) if is_prefill else -len(seqs)
         token_ids = self.model_runner.call("run", seqs, is_prefill)
+        # This is the code that run in child process
         self.scheduler.postprocess(seqs, token_ids, is_prefill)
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
         return outputs, num_tokens
@@ -72,6 +85,7 @@ class LLMEngine:
         prefill_throughput = decode_throughput = 0.
         while not self.is_finished():
             t = perf_counter()
+            # what is perf_counter?
             output, num_tokens = self.step()
             if num_tokens > 0:
                 prefill_throughput = num_tokens / (perf_counter() - t)
@@ -88,3 +102,10 @@ class LLMEngine:
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
         return outputs
+
+
+
+
+
+
+
