@@ -193,3 +193,8 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Mac-to-GPU sync state stays on the server.
+.nano-sync-owner
+.nano-sync-baseline/
+.nano-sync-backups/
