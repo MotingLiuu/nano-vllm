@@ -196,13 +196,26 @@ class ModelRunner:
         return block_tables
 
     # Summary: To avoid the overhead of padding with Variable-length Packing and PagedAttention
-    # Return:
+    # prepare_prefill prepares
+    # 1. input_ids: tokens to be decoded
+    # 2. positions: tokens' positions in sequences
+    # 3. cu_seqlens_q: querys' positions in flattened sequences
+    # 4. cu_seqlens_k: the length of each sequence's key/value context
+    # 5. max_seqlen_q: 
+    # 6. max_seqlen_k: 
+    # 7. slot_mapping: the physical position of tokens decoded should be stored in
+    # 8. block_tables: the block_tables of the model
+    # attention layer can use there information by context = get_context()
+
+    # Return: input_ids, positions
     def prepare_prefill(self, seqs: list[Sequence]):
         input_ids = []
         positions = []
+        # flatten sequences and store them into input_ids and positions
         cu_seqlens_q = [0]
-        # cumulative length. if there are 2 sequences (1. 5 tokens, 2. 3 tokens), then cu_seqlens_q = [0, 5, 8]
+        # cumulative q length. if there are 2 sequences (1. 5 tokens, 2. 3 tokens), then cu_seqlens_q = [0, 5, 8]. 0th seq = token [0,5) 1th seq = token [5,8)
         cu_seqlens_k = [0]
+        # culative length with kv cache.
         max_seqlen_q = 0
         max_seqlen_k = 0
         slot_mapping = []
@@ -211,6 +224,7 @@ class ModelRunner:
             start = seq.num_cached_tokens
             seqlen_q = seq.num_scheduled_tokens
             end = start + seqlen_q
+            # [start, end) is the range of query tokens
             seqlen_k = end
             input_ids.extend(seq[start:end])
             positions.extend(range(start, end))
@@ -224,14 +238,17 @@ class ModelRunner:
             end_block = (end + self.block_size - 1) // self.block_size
             for i in range(start_block, end_block):
                 slot_start = seq.block_table[i] * self.block_size
+                # the first slot of the physical blcok
                 if i == start_block:
                     slot_start += start % self.block_size
+                # the slot in 1st block may not from the start of the block
                 if i != end_block - 1:
                     slot_end = seq.block_table[i] * self.block_size + self.block_size
                 else:
                     slot_end = seq.block_table[i] * self.block_size + end - i * self.block_size
                 slot_mapping.extend(range(slot_start, slot_end))
         if cu_seqlens_k[-1] > cu_seqlens_q[-1]:    # prefix cache
+            # if there is kv cache hitted?
             block_tables = self.prepare_block_tables(seqs)
         input_ids = torch.tensor(input_ids, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
         positions = torch.tensor(positions, dtype=torch.int64, pin_memory=True).cuda(non_blocking=True)
