@@ -14,13 +14,19 @@ from nanovllm.engine.model_runner import ModelRunner
 
 class LLMEngine:
 
+    # Summary:
+    # thread 0 is the main controller, responsible for scheduling, receiving requests, and sending instructions
+    # use ctx.Process(target=ModelRunner, args=(config, i, event)) to create child process
     def __init__(self, model, **kwargs):
         config_fields = {field.name for field in fields(Config)}
         config_kwargs = {k: v for k, v in kwargs.items() if k in config_fields}
         config = Config(model, **config_kwargs)
         Sequence.block_size = config.kvcache_block_size
         self.ps = []
+        # save the child processes to ps
+        # when the child process exit, call p.join() to wait for the child process to exit
         self.events = []
+        # save the child process synchronize flag to events
         ctx = mp.get_context("spawn")
         # ctx is a multiprocessing context, it rules the way to spawn child process
         for i in range(1, config.tensor_parallel_size):
@@ -33,7 +39,7 @@ class LLMEngine:
             # set the entry point of child process
             process.start()
             # what is start?
-            # start the child process
+            # This is the code that create the child process and start it
             self.ps.append(process)
             # ps is process list, storing [Process_1, Process_2, ...]
             self.events.append(event)
