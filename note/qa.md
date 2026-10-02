@@ -81,6 +81,8 @@ Answer: I have not looked into engine. But I think this is because length of pro
   你可以尝试挑 1~2 个你最感兴趣的问题聊聊你的直觉或答案，我们可以顺着这些问题把整个
   engine 的运行链条彻底打通！
 
+  #### Question 6: how is a sequence's 'block_table' initialized?
+
 
 # LLMEngine.py
 
@@ -134,6 +136,41 @@ The `LLMEngine` will not be released by gc until python interpreter exit.
 For `LLMEngine` does not have a destructor, When `LLMEngine` is collected by gc. The child processes are still running in background. The shared memo in nanovllm is not unlinked. The main thread only collects some bytes occupied by the Python instance.
 
 ----
+
+
+# model_runner.py
+
+**prepare_prefill(self, seqs: list\[Sequence\])**
+
+1. Returns `input_ids`(`torch.int64`, flattened seqs' `input_ids`) and `positions`(the corresponding pos in the seq)
+
+2. compute `cu_seqlens_q`, `cu_seqlens_k`, `max_seqlen_q`, `max_seqlen_k` and `slot_mapping`, `slot_mapping` stores `slot_mapping.extend(range(slot_start, slot_end))`, every id's pa. This is a one to one mapping from `input_ids` to `slot_mapping`
+
+3. call `self.prepare_block_tables(seqs)` to see whether kv cache hitted 
+
+4. `set_context(True, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, None, block_tables)`
+
+----
+
+**prepare_decode(self, seq: list\[Sequence\])**
+
+
+----
+
+**prepare_block_tables(self, seqs: list\[Sequence\])**
+
+1. wrap `seq.block_table` into `block_tables`, whose shape is `(num_seqs, max_len)`. Pad the `block_tables` with `-1` if length of `seq.block_table` is less than `max_len`
+
+
+
+# utils/context.py
+
+**set_context(is_prefill, cu_seqlens_q, cu_seqlens_k, max_seqlen_q, max_seqlen_k, slot_mapping, slot_mapping_inv, context_lens, block_tables)**
+
+`_CONTEXT = Context()` create a global variable `_CONTEXT` which is a `Context` instance.
+`set_context` wrap current batch's information and store it into global variable `_CONTEXT`. so that, this information can be accessed anytime, anywhere
+
+
 
 
 
