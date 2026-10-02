@@ -205,6 +205,87 @@ The child process can use `event.wait()` to wait for the flag to be set.
 
 ----
 
+# torch.profile
+
+torch 4 layers structure
+
+```txt
+┌──────────────────────────────────────┐
+│ Python / nano-vLLM                   │
+│                                      │
+│ Scheduler                            │
+│ Sequence                             │
+│ ModelRunner                          │
+│ prepare_prefill / prepare_decode     │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│ PyTorch / ATen                      │
+│                                      │
+│ aten::mm                             │
+│ aten::view                           │
+│ aten::copy                           │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│ CUDA runtime / libraries            │
+│                                      │
+│ cudaLaunchKernel                    │
+│ cuBLAS                              │
+│ FlashAttention / Triton             │
+└──────────────────┬───────────────────┘
+                   │
+          asynchronous launch
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│ GPU                                  │
+│                                      │
+│ GEMM kernels                         │
+│ attention kernels                    │
+│ RMSNorm                              │
+│ RoPE                                 │
+│ sampling                             │
+└──────────────────────────────────────┘
+```
+
+----
+
+**_compile.compile_inner**
+1. **compile_attempt_0**
+2. **build_guards**
+
+----
+**compile_attempt_0**
+
+compiler attempts to use the most aggressive optimization plant, if some assumptions are not met, it will fall back to the less aggressive optimization plant.
+
+What does it do?
+1. **Operator Fusion**: Fuse continuous Elementwise, Reduction into one single kernel.
+2. **Codegen**: Generate triton code for the fused kernels.
+3. **call compiler**: call Triton and C++/PTX compiler to compile the code into a dynamic library which GPU can execute directly.
+
+----
+
+**build_guards**
+
+Dynamo records the assumptions when analyzing the Python bytecode. `build_guards` compile these assmuptions into a check(C/byte code). This includes 1. Does the Tensor's dtype, Shape, Stride meets the exception? 2. Is the global var modified?
+
+During 2nd turn, this check is executed. If the check passes, execute the compiled triton machine code. If the check failes, Recompile. 
+
+----
+
+**aten::xxx**
+
+aten is A TENsor Library. Written in C++.
+
+`aten::mm` is a matrix multiplication operator, only support 2D tensor. must (M * K) * (K * N) -> (M * N)
+not support broadcasting. just call `cuBLAS` directly.
+
+`aten::matmul` is a general matrix multiplication operator. support broadcasting. It is a Dispatcheer, when 2D * 2D -> aten::mm...
+
 
 
 
