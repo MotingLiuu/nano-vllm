@@ -4,6 +4,7 @@ from time import perf_counter
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 import torch.multiprocessing as mp
+from torch.profiler import record_function
 
 from nanovllm.config import Config
 from nanovllm.sampling_params import SamplingParams
@@ -66,10 +67,18 @@ class LLMEngine:
 
     # Summary: run one step and collect the finished sequences, output is list[(seq.seq_id, seq.completion_token_ids)]
     def step(self):
-        seqs, is_prefill = self.scheduler.schedule()
+        with record_function("scheduler"):
+            seqs, is_prefill = self.scheduler.schedule()
+
         num_tokens = sum(seq.num_scheduled_tokens for seq in seqs) if is_prefill else -len(seqs)
-        token_ids = self.model_runner.call("run", seqs, is_prefill)
-        self.scheduler.postprocess(seqs, token_ids, is_prefill)
+
+        phase = "prefill" if is_prefill else "decode"
+        with record_function(phase):
+            token_ids = self.model_runner.call("run", seqs, is_prefill)
+        # This is the code that run in child process
+        with record_function(f"{phase}:postprocess"):
+            self.scheduler.postprocess(seqs, token_ids, is_prefill)
+
         outputs = [(seq.seq_id, seq.completion_token_ids) for seq in seqs if seq.is_finished]
         return outputs, num_tokens
 
