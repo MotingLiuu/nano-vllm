@@ -84,6 +84,44 @@ Answer: I have not looked into engine. But I think this is because length of pro
 
 # LLMEngine.py
 
+**Summary**
+
+`LLMEngine` is the entry point of the nano-vLLM. 
+
+During the initialization
+1. create `config.tensor_parallel_size - 1` child processes which starts from `ModelRunner`.
+2. use `ctx.Event()` to control the child processes.
+3. create a `scheduler` in the main process.
+4. registe `self.exit` to the exit event.
+
+After the initialization,
+1. `add_request` adds requests to the `self.scheduler`
+2. `step` runs one step of the `self.scheduler`
+3. `generate` call `self.step()` until all request finished.
+
+```txt
+
+  用户调用: engine.generate(["你好", "讲个笑话", ...])
+      │
+      ├─ 1. add_request(...)  -> 分词、包装为 Sequence
+  对象、进入等待队列
+      │
+      └─ 2. while not finished:
+              │
+              └─ 调用 step() ────► 调度器选取批次 (Scheduler)
+                                     │
+                                     ├─► 模型前向传播 (ModelRunner: GPU
+  矩阵乘)
+                                     │
+                                     └─► 后处理判断结束 (Postprocess)
+              │
+              └─ 更新吞吐量与进度条，收集完成的输出
+      │
+      └─ 3. 将 token_ids 批量 decode 为文字并返回
+```
+
+----
+
 `atexit.register(self.exit)` regist the `self.exit` function to the exit event. `self.exit` will execute when python interpreter exit.
 
 For `atexit` (global list) -> `self.exit` -> `self` (An LLMEngine instance)
