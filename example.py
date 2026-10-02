@@ -25,9 +25,23 @@ def main():
         max_tokens=16,
     )
 
+    warmup_prompts = [
+        "Explain what a compiler does.",
+        "List several common sorting algorithms.",
+    ]
+
     prompts = [
         "introduce yourself",
         "list all prime numbers within 100",
+    ]
+
+    warmup_prompts = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt}],
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        for prompt in warmup_prompts
     ]
 
     prompts = [
@@ -38,6 +52,8 @@ def main():
         )
         for prompt in prompts
     ]
+
+    llm.generate(warmup_prompts, sampling_params)
 
     # ============================
     # Start PyTorch Profiler
