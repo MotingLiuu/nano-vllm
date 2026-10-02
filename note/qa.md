@@ -82,6 +82,56 @@ Answer: I have not looked into engine. But I think this is because length of pro
   engine 的运行链条彻底打通！
 
 
+# LLMEngine.py
+
+`atexit.register(self.exit)` regist the `self.exit` function to the exit event. `self.exit` will execute when python interpreter exit.
+
+For `atexit` (global list) -> `self.exit` -> `self` (An LLMEngine instance)
+The `LLMEngine` will not be released by gc until python interpreter exit.
+
+----
+
+**What if without atexit.register(self.exit)?**
+
+For `LLMEngine` does not have a destructor, When `LLMEngine` is collected by gc. The child processes are still running in background. The shared memo in nanovllm is not unlinked. The main thread only collects some bytes occupied by the Python instance.
+
+----
+
+
+
+
+
+# Python 
+
+## MultiProcess
+
+```python
+  import torch.multiprocessing as mp
+
+    # 获得一个配置为 "spawn" 的上下文对象
+    ctx = mp.get_context("spawn")
+
+    # ctx 就像一个拥有预设环境的 mp 镜像库：
+    p = ctx.Process(target=worker)   # 自动使用 spawn 模式的进程对象
+    event = ctx.Event()              # 适配 spawn 的进程同步事件
+    queue = ctx.Queue()              # 适配 spawn 的进程间通信队列
+    lock = ctx.Lock()                # 适配 spawn 的进程互斥锁
+```
+
+----
+
+`ctx` is a tool box set to `spawn` mode. 
+
+----
+
+
+`ctx.Event()` is a synchronization flag. It is a one way communication flag from the parent process to the child process. Only two state 1. `set` 2. `clear`.
+The child process can use `event.wait()` to wait for the flag to be set.
+
+----
+
+
+
 
 
 
