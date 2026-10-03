@@ -253,12 +253,13 @@ torch 4 layers structure
 
 ----
 
-**_compile.compile_inner**
+## **_compile.compile_inner**
+
 1. **compile_attempt_0**
 2. **build_guards**
 
 ----
-**compile_attempt_0**
+## **compile_attempt_0**
 
 compiler attempts to use the most aggressive optimization plant, if some assumptions are not met, it will fall back to the less aggressive optimization plant.
 
@@ -269,7 +270,7 @@ What does it do?
 
 ----
 
-**build_guards**
+## **build_guards**
 
 Dynamo records the assumptions when analyzing the Python bytecode. `build_guards` compile these assmuptions into a check(C/byte code). This includes 1. Does the Tensor's dtype, Shape, Stride meets the exception? 2. Is the global var modified?
 
@@ -277,14 +278,58 @@ During 2nd turn, this check is executed. If the check passes, execute the compil
 
 ----
 
-**aten::xxx**
+## **aten::xxx**
 
 aten is A TENsor Library. Written in C++.
 
 `aten::mm` is a matrix multiplication operator, only support 2D tensor. must (M * K) * (K * N) -> (M * N)
 not support broadcasting. just call `cuBLAS` directly.
 
+
 `aten::matmul` is a general matrix multiplication operator. support broadcasting. It is a Dispatcheer, when 2D * 2D -> aten::mm...
+
+
+`aten::empty` new a empty tensor with set shape/dtype/device.
+
+
+`aten::detach` detach a tensor from computation graph. don't need to push a GPU kernel, for this is a cpu op, just modify the metadata.
+
+`aten::to` corresponds to `torch.to`. convert a tensor to a new dtype. if already satisfied, just return. do not push a GPU kernel. If not satisfied, push GPU kernel.
+
+already satisfied:
+
+![satisfied](./resource/s2.png)
+
+not satisfied:
+
+![not satisfied](./resource/s3.png)
+
+`aten::empty_strided` create tensor's metadata and storage.(just create a destination)
+`aten::copy_` copy source tensor to destination tensor. It calls cudaMemcpyAsync to do this work.
+
+The triangle shape means profiler records a memo op here. This is a memo op (malloc or free). Allocator is in CPU, it would decide the block in GPU to use.
+![triangle](./resource/s4.png)
+
+
+`cudaStreamIsCapturing` is a function in cpu cuda runtime. Query if the stream is capturing CUDA Graph.
+
+`cudaEventRecordWithFlags` set a flag in the stream line.
+
+```python
+cudaEventRecordWithFlags(event, stream, flags); # set a flag in the stream line.
+
+cudaEventQuery(event); # query the flag in the stream line. to see if whether GPU aleady executed Event E.
+
+cudaEventSynchronize(event); # wait for GPU to execute Event E.
+```
+
+----
+
+## **Activity Buffer Request**
+
+![perfetto](./resource/s1.png)
+
+`Activity Buffer Request` is belong to 'torch.profiler'. Torch profiler needs to request some memo to record GPU activity.
 
 
 
