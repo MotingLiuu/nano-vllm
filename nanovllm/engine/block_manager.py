@@ -1,3 +1,40 @@
+# Question: what does BlockManager really control? The sapce to store is allocated in model_runner by calling allocate_kc_cache().
+# Each GPU would save some heads's kv cache in its allocated GPU memo.
+#
+#
+# Answer: BlockManager only manage the block'id and block content, dont manage the real kv cache's memo. A Block is contains metadata of some kv cache's memo.
+# 1. initialize a seq's block_table(1. cached blocks' id  2. new blocks id)
+# 2. recycle the seq's sources during deallocating. (just the block_id and block's content)
+# 3. compute the block's hash
+#
+
+
+# Answer: The main functions are
+# 1.can_allocate(seq), allocate(seq): find cached blocks, allocate new blocks if needed.
+# 2.deallocate(seq): -1 ref count, if ref count reaches 0, _deallocate the block.
+# 3.can_append(seq), may_append(seq): check if there is a free block, and allocate a new block if there is one.
+# 4.compute_hash(token_ids, int)
+# 5.hash_block(seq)
+
+# Question: I know there is 2 check
+# 1. hash
+# 2. current token ids
+# But I don't think this can ensure the uniqueness of the block with context.
+# Is there a situation that context is diff, current token ids is same, but hash is same?
+#
+# Answer: yes, this can not guarantee the uniqueness of the block with context. but 99.9% of the time, it will be unique.
+
+# can_allocate only runs on thread0, dont need locks
+# can_allocate and allocate are integrated. can_allocate first determines if there are enough source
+# blocks to allocate, and then allocate them if there are enough free blocks. If dont split the source's availablity and source request, code would cause source leak.
+
+
+# can_append and may_append are integrated. can_append first checks if there is one free block, and then may_append allocates a new block if there is one.
+
+# A block_id in free_block_ids moved out of free_block_ids throught self.allocate(cache hit), self._allocate(store new content)
+
+
+
 from collections import deque
 import xxhash
 import numpy as np
@@ -28,6 +65,7 @@ class BlockManager:
     def __init__(self, num_blocks: int, block_size: int):
         self.block_size = block_size
         self.blocks: list[Block] = [Block(i) for i in range(num_blocks)]
+        # num_blocks is num_kv_cache_blocks computed at model runner.
         self.hash_to_block_id: dict[int, int] = dict()
         self.free_block_ids: deque[int] = deque(range(num_blocks))
         self.used_block_ids: set[int] = set()
@@ -36,22 +74,16 @@ class BlockManager:
     def compute_hash(cls, token_ids: list[int], prefix: int = -1):
         h = xxhash.xxh64()
         # Question: what is xxh64?
+        # Answer: create an incremental 64-bit hasher from the xxhash lib. It doesn't return the final hash value, need to feed it bytes with .update(), then
+        # get the result with .intdigest()
         if prefix != -1:
             h.update(prefix.to_bytes(8, "little"))
-            # Question: explain the h.update and prefix.to_bytes
+            # to_bytes converts an integer to a byte string, little means least-significant byte first
         h.update(np.array(token_ids).tobytes())
-        # So h represents the hash value prefix and token_ids?
         return h.intdigest()
-    # I have no idea with xxhash, expalin in detail.
-    # explain hash in detail
-    # can this ensure the uniqueness of the hash value?
 
-    # Question: I know there is 2 check
-    # 1. hash
-    # 2. current token ids
-    # But I don't think this can ensure the uniqueness of the block with context.
-    # Is there a situation that context is diff, current token ids is same, but hash is same?
-
+    # Summary: popleft from self.free_block_ids, if this block is still in self.used_block_ids, remove it from self.used_block_ids.
+    # A map from hash to block id is only removed by _allocate_block, lazy remove.
     def _allocate_block(self) -> int:
         block_id = self.free_block_ids.popleft()
         block = self.blocks[block_id]
@@ -62,25 +94,28 @@ class BlockManager:
         self.used_block_ids.add(block_id)
         return block_id
 
+    # Summary: move block_id from self.used_block_ids to self.free_block_ids.
+    # do not touch self.hash_to_block_id and contents in self.blocks[block_id]
     def _deallocate_block(self, block_id: int):
         assert self.blocks[block_id].ref_count == 0
         self.used_block_ids.remove(block_id)
         self.free_block_ids.append(block_id)
 
+    # Summary: find the num of cached blocks for given sequence and determine if there are enough free blocks
+    # can_allocate only runs on thread0, dont need locks
+    # can_allocate and allocate are integrated. can_allocate first determines if there are enough source
+    # blocks to allocate, and then allocate them if there are enough free blocks. If dont split the source's availablity and source request, code would cause source leak.
     def can_allocate(self, seq: Sequence) -> int:
-        # Question: is can_allocated used for prefill?
-        # I do not see any decoding symbol in the code. like +1 ...
-        # This code just use the current seq.num_blocks
         h = -1
         num_cached_blocks = 0
         num_new_blocks = seq.num_blocks
-        # current blocks
+
+        ####
+        # find the cached blocks
+        ####
         for i in range(seq.num_blocks - 1):
             token_ids = seq.block(i)
             h = self.compute_hash(token_ids, h)
-            # Question: what is h here? why h is sent to compute_hash through prefix?
-            # is h a hash value chain?
-            # Answer: Yes, h is computed through chain.
             block_id = self.hash_to_block_id.get(h, -1)
             if block_id == -1 or self.blocks[block_id].token_ids != token_ids:
                 break
@@ -88,10 +123,15 @@ class BlockManager:
             num_cached_blocks += 1
             if block_id in self.used_block_ids:
                 num_new_blocks -= 1
+
         if len(self.free_block_ids) < num_new_blocks:
             return -1
         return num_cached_blocks
 
+    # Summary:
+    # store block_id hitted into seq.block_table, _allocate_block() for tokens not in cache.
+    #
+    # A block_id in free_block_ids moved out of free_block_ids throught self.allocate(cache hit), self._allocate(store new content)
     def allocate(self, seq: Sequence, num_cached_blocks: int):
         assert not seq.block_table
         h = -1
@@ -105,8 +145,6 @@ class BlockManager:
             else:
                 block.ref_count = 1
                 self.free_block_ids.remove(block_id)
-                # so free block ids represents that the block has kv cache, but not in used, it can be freed by manager if necessary?
-                # Question: when will the block move from used to free?
                 self.used_block_ids.add(block_id)
             seq.block_table.append(block_id)
         for i in range(num_cached_blocks, seq.num_blocks):
@@ -114,7 +152,6 @@ class BlockManager:
         seq.num_cached_tokens = num_cached_blocks * self.block_size
 
     def deallocate(self, seq: Sequence):
-        # deallocate would put the block back to free block ids
         for block_id in reversed(seq.block_table):
             block = self.blocks[block_id]
             block.ref_count -= 1
@@ -124,11 +161,14 @@ class BlockManager:
         seq.block_table.clear()
 
     def can_append(self, seq: Sequence) -> bool:
-        # check if there is enough free blocks
+        # check if there is one free block.
+        # this would only used during decoding
         return len(self.free_block_ids) >= (len(seq) % self.block_size == 1)
 
     def may_append(self, seq: Sequence):
         # if the last block is full, allocate a new block
+        #
+        # can_append and may_append are integrated. can_append first checks if there is one free block, and then may_append allocates a new block if there is one.
         if len(seq) % self.block_size == 1:
             seq.block_table.append(self._allocate_block())
 
