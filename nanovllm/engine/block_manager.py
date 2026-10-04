@@ -4,7 +4,7 @@
 #
 # Answer: BlockManager only manage the block'id and block content, dont manage the real kv cache's memo. A Block is contains metadata of some kv cache's memo.
 # 1. initialize a seq's block_table(1. cached blocks' id  2. new blocks id)
-# 2. recycle the seq's sources during deallocating. (just the block_id and block's content)
+# 2. recycle the seq's sources during deallocating. (just the block_id and block's ref count, still can be used by other seqs)
 # 3. compute the block's hash
 #
 
@@ -12,7 +12,7 @@
 # Answer: The main functions are
 # 1.can_allocate(seq), allocate(seq): find cached blocks, allocate new blocks if needed.
 # 2.deallocate(seq): -1 ref count, if ref count reaches 0, _deallocate the block.
-# 3.can_append(seq), may_append(seq): check if there is a free block, and allocate a new block if there is one.
+# 3.can_append(seq), may_append(seq): check if there is a free block and need to request a free block, and allocate a new block if there is one.
 # 4.compute_hash(token_ids, int)
 # 5.hash_block(seq)
 
@@ -22,7 +22,7 @@
 # But I don't think this can ensure the uniqueness of the block with context.
 # Is there a situation that context is diff, current token ids is same, but hash is same?
 #
-# Answer: yes, this can not guarantee the uniqueness of the block with context. but 99.9% of the time, it will be unique.
+# Answer: yes, this can not guarantee the uniqueness of the block with context. but 99.9999% of the time, it will be unique.
 
 # can_allocate only runs on thread0, dont need locks
 # can_allocate and allocate are integrated. can_allocate first determines if there are enough source
