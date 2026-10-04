@@ -32,6 +32,7 @@ class ModelRunner:
         torch.set_default_device("cuda")
         self.model = Qwen3ForCausalLM(hf_config)
         # Qwen3ForCausalLM only loads the structure of the model
+        # Qwen3ForCausaLLM is a wrapper of Qwen3Model and LLMHead
         load_model(self.model, config.model)
         # load_model() loads the weights of the model
         self.sampler = Sampler()
@@ -132,6 +133,7 @@ class ModelRunner:
 
         # Question: what is the difference between current and used? why substract both used and (peak-current)?
         num_kv_heads = hf_config.num_key_value_heads // self.world_size
+        # every gpu just save a part of the kv cache's heads
         head_dim = getattr(hf_config, "head_dim", hf_config.hidden_size // hf_config.num_attention_heads)
         # Question: hf_config.head_dim is computed here? why?
         # Answer: hf_config may contain head_dim, if not, it is computed here
@@ -172,7 +174,7 @@ class ModelRunner:
                 module.k_cache = self.kv_cache[0, layer_id]
                 # Question: is this copy or reference?
                 # Answer: reference
-                # In python or pytorch 
+                # In python or pytorch
                 # Simple Assignment(a = b) is always a reference
                 # Pytorch distinguishes between Basic Indexing (view/reference) and Advanced Indexing(Copy)
                 # Basic Slicing t[0], t[1:5]... is reference
@@ -201,8 +203,8 @@ class ModelRunner:
     # 2. positions: tokens' positions in sequences
     # 3. cu_seqlens_q: querys' positions in flattened sequences
     # 4. cu_seqlens_k: the length of each sequence's key/value context
-    # 5. max_seqlen_q: 
-    # 6. max_seqlen_k: 
+    # 5. max_seqlen_q:
+    # 6. max_seqlen_k:
     # 7. slot_mapping: the physical position of tokens decoded should be stored in
     # 8. block_tables: the block_tables of the model
     # attention layer can use there information by context = get_context()

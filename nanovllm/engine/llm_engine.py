@@ -53,6 +53,8 @@ class LLMEngine:
         # what is atexit? and register?
         # when the program exit, call this function
 
+    # Summary: After self.model_runner.call("exit") tells the workes to shut down, the loop calls join() on each one.
+    # p.join() waits for that child process to finish
     def exit(self):
         self.model_runner.call("exit")
         del self.model_runner
@@ -117,10 +119,3 @@ class LLMEngine:
         outputs = [outputs[seq_id] for seq_id in sorted(outputs.keys())]
         outputs = [{"text": self.tokenizer.decode(token_ids), "token_ids": token_ids} for token_ids in outputs]
         return outputs
-
-
-
-
-
-
-

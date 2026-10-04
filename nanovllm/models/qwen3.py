@@ -191,7 +191,7 @@ class Qwen3ForCausalLM(nn.Module):
     # nanovllm fuse then into qkv_proj: linear.py and gate_up_proj: linear.py
 
     # Question: these can be fused into bigger GEMM kernel during inference. How about training?
-    # Answer: yes, they can be fused into bigger GEMM kernel during inference. But for downstream use huggingface just store them seperately.
+    # Answer: yes, they can be fused into bigger GEMM kernel during training. But for downstream use huggingface just store them seperately.
     packed_modules_mapping = {
         "q_proj": ("qkv_proj", "q"),
         "k_proj": ("qkv_proj", "k"),
