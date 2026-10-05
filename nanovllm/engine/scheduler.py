@@ -1,3 +1,34 @@
+# Summary:
+# Scheduler contains a BlockManager, 1. main function is schedule, schedule a batch of sequences to be prefilled or decoded. 2. postprocess
+#
+# Seq's status: WAITTING(have not be prefilled), RUNNING(have been prefilled), FINISHED(have been decoded)
+# WAITTING-schedule()->RUNNING-postprocess()->FINISHED
+# RUNNING-schedule()-preempt()->WAITTING
+#
+# func: schedule, prefill or decode seqs, can execute chuncked prefill
+#
+# func: add(seq), add a request
+#
+# func: preempt, recycle resources by calling deallocate, and put seq back to waiting queue.
+#
+# func: is_finished, return True if all seqs are finished.
+#
+# func: postprocess, if prefill, just hash the blocks; if decode, hash the blocks and append token_id, if eos or max_tokens reached, set status to FINISHED, deallocate, and remove from running.
+
+# kv_cache's size is (2, hf_config.num_hidden_layers, config.num_kvcache_blocks, self.block_size, num_kv_heads, head_dim)
+#
+#
+# Prefill, a seq will be added to scheduled_seqs when it satisfies 1. can_allocate 2. num_tokens(will be scheduled) < remaining(except 1st seq)
+# There is only one situtation that scheduled_seq returned is none: 1st seq's blocks can not be allocated
+#
+# Decode, pop the left most seq from self.running.
+# If the seq can not can_append, preempt the right most seq from self.running. (This would put prefilled seq back to waiting to acquire its resources, just call deallocate
+# and put seq back to left of self.waiting to ensure it would be the first one to be prefilled when memo avilable)
+# If self.running is empty, break the loop and return scheduled_seqs.
+#
+# Every seq only executes allocate once.
+# seq.status == SequenceStatus.RUNNING means, seq has finished prefill and can be decoded.
+
 from collections import deque
 
 from nanovllm.config import Config
@@ -25,14 +56,32 @@ class Scheduler:
     def add(self, seq: Sequence):
         self.waiting.append(seq)
 
-    # If there is seq need to be prefilled, return True
-    # do prefill or decode, just one of them
+    # Summary: This is the main function of scheduling.
+    #
+    # If self.waiting, jsut prefilling.
+    # If 1st seq can not be allocated, break, assert will not pass, panic. If 1st seq can be allocated, but remaining < num_tokens, chunked prefill
+    # If 1st can be allocated, remaining >= num_tokens, full prefill, self.waiting.popleft, self.running.append, seq.status=RUNNING -> check next seq
+    #
+    # If not self.waiting, just decoding.
+    #
+    #
     def schedule(self) -> tuple[list[Sequence], bool]:
         # return tuple[list[]]
         scheduled_seqs = []
         num_batched_tokens = 0
 
-        # prefill
+        ####
+        # Prefill, a seq will be added to scheduled_seqs when it satisfies 1. can_allocate 2. num_tokens(will be scheduled) < remaining(except 1st seq)
+        # There is only one situtation that scheduled_seq returned is none: 1st seq's blocks can not be allocated
+        #
+        # Decode, pop the left most seq from self.running.
+        # If the seq can not can_append, preempt the right most seq from self.running. (This would put prefilled seq back to waiting to acquire its resources, just call deallocate
+        # and put seq back to left of self.waiting to ensure it would be the first one to be prefilled when memo avilable)
+        # If self.running is empty, break the loop and return scheduled_seqs.
+        #
+        # Every seq only executes allocate once.
+        # seq.status == SequenceStatus.RUNNING means, seq has finished prefill and can be decoded.
+        ####
         while self.waiting and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.waiting[0]
             remaining = self.max_num_batched_tokens - num_batched_tokens
@@ -42,6 +91,7 @@ class Scheduler:
             if not seq.block_table:
                 num_cached_blocks = self.block_manager.can_allocate(seq)
                 if num_cached_blocks == -1:
+                    # If 1st seq cannot be allocated, break, assert will not pass
                     break
                 num_tokens = seq.num_tokens - num_cached_blocks * self.block_size
             else:
@@ -64,17 +114,19 @@ class Scheduler:
         if scheduled_seqs:
             return scheduled_seqs, True
 
-        # decode
+
+        ####
+        # Decode, pop the left most seq from self.running.
+        # If the seq can not can_append, preempt the right most seq from self.running. (This would put prefilled seq back to waiting to acquire its resources, just call deallocate
+        # and put seq back to left of self.waiting to ensure it would be the first one to be prefilled when memo avilable)
+        # If self.running is empty, break the loop and return scheduled_seqs.
+        ####
         while self.running and len(scheduled_seqs) < self.max_num_seqs:
             seq = self.running.popleft()
             while not self.block_manager.can_append(seq):
-                # LIFO, preempt from the end of self.running
                 if self.running:
                     self.preempt(self.running.pop())
                 else:
-                    # Question: why preempt seq self?
-                    # if break here, the assert will fail
-                    # Answer: This means memo used by seq can not be santisfied even using all of the memo.
                     self.preempt(seq)
                     break
             else:
@@ -97,15 +149,14 @@ class Scheduler:
         self.waiting.appendleft(seq)
         # add seq to left of waiting, to ensure it would be the first one to be prefilled when memo avilable
 
+    # If is_prefill, just hash the blocks
+    # If decode, hash the blocks and append token_id, if eos or max_tokens reached, set status to FINISHED, deallocate, and remove from running
     def postprocess(self, seqs: list[Sequence], token_ids: list[int], is_prefill: bool):
         for seq, token_id in zip(seqs, token_ids):
             self.block_manager.hash_blocks(seq)
             seq.num_cached_tokens += seq.num_scheduled_tokens
             seq.num_scheduled_tokens = 0
             if is_prefill and seq.num_cached_tokens < seq.num_tokens:
-                # Question: this would only happen when chunked prefill?
-                # what is the difference between break and continue?
-                # Answer: no difference.
                 continue
             seq.append_token(token_id)
             if (not seq.ignore_eos and token_id == self.eos) or seq.num_completion_tokens == seq.max_tokens:
@@ -113,12 +164,3 @@ class Scheduler:
                 seq.status = SequenceStatus.FINISHED
                 self.block_manager.deallocate(seq)
                 self.running.remove(seq)
-
-
-
-
-
-
-
-
-
