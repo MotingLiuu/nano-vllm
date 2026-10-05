@@ -25,18 +25,14 @@ class ModelRunner:
 
         dist.init_process_group("nccl", "tcp://localhost:2333", world_size=self.world_size, rank=rank)
         # Question: what is init_process_group?
-        # Answer: initialize Pytorch's distributed communication environment acorss multiple GPUs
+        # Answer: set up a priviate group chat so all GPUs can coordinate and send data to one another.
         torch.cuda.set_device(rank)
         default_dtype = torch.get_default_dtype()
         torch.set_default_dtype(hf_config.dtype)
         torch.set_default_device("cuda")
         self.model = Qwen3ForCausalLM(hf_config)
-        # Qwen3ForCausalLM only loads the structure of the model
-        # Qwen3ForCausaLLM is a wrapper of Qwen3Model and LLMHead
         load_model(self.model, config.model)
-        # load_model() loads the weights of the model
         self.sampler = Sampler()
-        # Sampler transform logits to next token id
         self.warmup_model()
         self.allocate_kv_cache()
         if not self.enforce_eager:
@@ -47,10 +43,14 @@ class ModelRunner:
         if self.world_size > 1:
             if rank == 0:
                 self.shm = SharedMemory(name="nanovllm", create=True, size=2**20)
+                # crave out a chunk of pa(size = 2**20, 1MB), and give it a name "nanovllm"
                 dist.barrier()
+                # no process can move past the barrier until every process has arrived at it.
+                # This is to ensure Rank1,2,3... access the shared memo after created by rankk0
             else:
                 dist.barrier()
                 self.shm = SharedMemory(name="nanovllm")
+                # The os maps the exact same pa into the memo address space of the child process
                 self.loop()
 
     def exit(self):
@@ -63,6 +63,7 @@ class ModelRunner:
             del self.graphs, self.graph_pool
         torch.cuda.synchronize()
         dist.destroy_process_group()
+
 
     def loop(self):
         while True:
@@ -79,6 +80,7 @@ class ModelRunner:
         self.event.clear()
         return method_name, args
 
+    # Summary: this func is used by rank0, write len(data) and [method_name, *args] into shard memo, then call event
     def write_shm(self, method_name, *args):
         assert self.world_size > 1 and self.rank == 0
         data = pickle.dumps([method_name, *args])
@@ -87,7 +89,9 @@ class ModelRunner:
         self.shm.buf[4:n+4] = data
         for event in self.event:
             event.set()
+            # This flips the flag from False to True, wakes up the child process that was blocked on self.event.wait()
 
+    # Summary: If rank0, write method_name and args into shm, then call event; otherwise, call the method directly.
     def call(self, method_name, *args):
         if self.world_size > 1 and self.rank == 0:
             self.write_shm(method_name, *args)

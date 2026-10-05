@@ -56,7 +56,7 @@ class Scheduler:
     def add(self, seq: Sequence):
         self.waiting.append(seq)
 
-    # Summary: This is the main function of scheduling.
+    # Summary: This is the main function of scheduling. schedule a batch of sequences(prefill or decode), if not allocated, allocate(only prefill)
     #
     # If self.waiting, jsut prefilling.
     # If 1st seq can not be allocated, break, assert will not pass, panic. If 1st seq can be allocated, but remaining < num_tokens, chunked prefill
